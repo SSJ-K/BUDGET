@@ -789,7 +789,22 @@ let formState = {
 };
 let editingId = null;
 let sessionUnlocked = false;
+let lastActivity = Date.now();
 const PIN_STORAGE_KEY = 'budget_pin';
+const PIN_TIMEOUT_KEY = 'budget_pin_timeout';
+
+function getTimeoutMs() {
+  const val = localStorage.getItem(PIN_TIMEOUT_KEY);
+  return val ? parseInt(val) : 300000; // default 5 min
+}
+
+function trackActivity() {
+  lastActivity = Date.now();
+}
+
+function isSessionExpired() {
+  return (Date.now() - lastActivity) > getTimeoutMs();
+}
 
 const FORM_STORAGE_KEY = 'budget_tracker_form_v1';
 
@@ -900,6 +915,7 @@ function haptic() {
 
 function switchTab(tab) {
   currentTab = tab;
+  trackActivity();
   document.querySelectorAll('.tab').forEach(t => {
     t.classList.toggle('active', t.dataset.tab === tab);
   });
@@ -917,6 +933,9 @@ function render() {
 
   // Check PIN lock for protected tabs
   const pin = localStorage.getItem(PIN_STORAGE_KEY);
+  if (pin && sessionUnlocked && isSessionExpired()) {
+    sessionUnlocked = false;
+  }
   const needsPin = pin && !sessionUnlocked && ['budget', 'history', 'settings'].includes(currentTab);
 
   if (needsPin) {
@@ -1364,6 +1383,7 @@ function attachPinListeners() {
         if (pinInput === storedPin) {
           sessionUnlocked = true;
           pinInput = '';
+          trackActivity();
           haptic();
           render();
         } else {
@@ -1402,6 +1422,7 @@ function attachPinSetupListeners() {
           if (pinInput === pinSetupFirst) {
             localStorage.setItem(PIN_STORAGE_KEY, pinInput);
             sessionUnlocked = true;
+            trackActivity();
             pinInput = '';
             pinSetupMode = null;
             pinSetupStep = 1;
@@ -1798,16 +1819,27 @@ function renderSettingsView() {
   html += `
     <div class="card">
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);margin-bottom:10px;">Security</div>
-      <div class="setting-row" style="${hasPin ? '' : 'border-bottom:none;'}">
+      <div class="setting-row">
         <span class="setting-label">PIN Lock</span>
         <button class="btn-small btn ${hasPin ? 'btn-primary' : 'btn-secondary'}" id="btn-pin-toggle"
                 style="width:60px;padding:6px 12px;font-size:12px;">${hasPin ? 'ON' : 'OFF'}</button>
       </div>
       ${hasPin ? `
-      <div class="setting-row" style="border-bottom:none;">
+      <div class="setting-row">
         <span class="setting-label">Change PIN</span>
         <button class="btn-small btn btn-secondary" id="btn-pin-change"
                 style="padding:6px 12px;font-size:12px;">Change</button>
+      </div>
+      <div class="setting-row" style="border-bottom:none;">
+        <span class="setting-label">Auto-lock after</span>
+        <select class="form-input" id="inp-pin-timeout"
+                style="width:110px;font-size:13px;padding:6px 28px 6px 10px;">
+          <option value="30000" ${getTimeoutMs()===30000?'selected':''}>30 seconds</option>
+          <option value="60000" ${getTimeoutMs()===60000?'selected':''}>1 minute</option>
+          <option value="120000" ${getTimeoutMs()===120000?'selected':''}>2 minutes</option>
+          <option value="300000" ${getTimeoutMs()===300000?'selected':''}>5 minutes</option>
+          <option value="600000" ${getTimeoutMs()===600000?'selected':''}>10 minutes</option>
+        </select>
       </div>
       ` : ''}
       <p style="font-size:11px;color:var(--text-tertiary);margin-top:4px;">Locks Budget, History, and Settings tabs. Add screen stays open for quick entry.</p>
@@ -1973,6 +2005,15 @@ function attachSettingsListeners() {
       pinSetupFirst = '';
       currentTab = 'pinsetup';
       render();
+    });
+  }
+
+  // PIN timeout
+  const timeoutEl = document.getElementById('inp-pin-timeout');
+  if (timeoutEl) {
+    timeoutEl.addEventListener('change', e => {
+      localStorage.setItem(PIN_TIMEOUT_KEY, e.target.value);
+      showToast('Auto-lock updated');
     });
   }
 }
@@ -2172,6 +2213,15 @@ if (savedTheme === 'dark') {
 
 // Restore form state (survives accidental close)
 restoreFormState();
+
+// Track activity on any touch/click
+document.addEventListener('touchstart', trackActivity, { passive: true });
+document.addEventListener('click', trackActivity);
+
+// Re-check PIN lock when app comes back to foreground
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') render();
+});
 
 render();
 </script>
