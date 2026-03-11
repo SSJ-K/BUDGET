@@ -546,6 +546,68 @@ select.form-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http
   text-align: center;
 }
 
+/* PIN LOCK */
+.pin-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+.pin-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.pin-subtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+}
+.pin-dots {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 28px;
+}
+.pin-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.pin-dot.filled {
+  background: var(--text);
+  border-color: var(--text);
+}
+.pin-dot.error {
+  background: var(--red);
+  border-color: var(--red);
+}
+.pin-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 72px);
+  gap: 12px;
+}
+.pin-key {
+  width: 72px;
+  height: 52px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 22px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pin-key:active { background: var(--bg-input); }
+.pin-key.empty { border: none; background: none; }
+
 /* HIDDEN */
 .hidden { display: none !important; }
 </style>
@@ -726,6 +788,8 @@ let formState = {
   date: '',
 };
 let editingId = null;
+let sessionUnlocked = false;
+const PIN_STORAGE_KEY = 'budget_pin';
 
 const FORM_STORAGE_KEY = 'budget_tracker_form_v1';
 
@@ -851,6 +915,18 @@ function render() {
   const title = document.getElementById('page-title');
   const subtitle = document.getElementById('page-subtitle');
 
+  // Check PIN lock for protected tabs
+  const pin = localStorage.getItem(PIN_STORAGE_KEY);
+  const needsPin = pin && !sessionUnlocked && ['budget', 'history', 'settings'].includes(currentTab);
+
+  if (needsPin) {
+    title.textContent = 'Locked';
+    subtitle.textContent = '';
+    content.innerHTML = renderPinEntry();
+    attachPinListeners();
+    return;
+  }
+
   switch (currentTab) {
     case 'add':
       title.textContent = editingId ? 'Edit Expense' : 'Add Expense';
@@ -876,6 +952,12 @@ function render() {
       subtitle.textContent = '';
       content.innerHTML = renderSettingsView();
       attachSettingsListeners();
+      break;
+    case 'pinsetup':
+      title.textContent = 'Set PIN';
+      subtitle.textContent = '';
+      content.innerHTML = renderPinSetup();
+      attachPinSetupListeners();
       break;
   }
 }
@@ -963,7 +1045,34 @@ function renderAddView() {
       ${editingId ? '<button class="btn btn-secondary" style="margin-top:8px;" id="btn-cancel-edit">Cancel Edit</button>' : ''}
     </div>
 
-    ${renderQuickBudgetSummary()}
+    ${renderSimpleTotal()}
+  `;
+}
+
+function renderSimpleTotal() {
+  const now = new Date();
+  const txs = getMonthTxs(now.getMonth(), now.getFullYear());
+
+  let totalSpent = 0;
+  txs.forEach(tx => {
+    if (catGroup(tx.category) !== 'REIMBURSEMENTS') totalSpent += tx.amount;
+  });
+
+  const reimb = txs.filter(tx => catGroup(tx.category) === 'REIMBURSEMENTS')
+                    .reduce((s, tx) => s + tx.amount, 0);
+  const netSpent = totalSpent - reimb;
+
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysLeft = daysInMonth - now.getDate();
+
+  return `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;">
+        <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);">Spent This Month</span>
+        <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-tertiary);">${daysLeft} day${daysLeft !== 1 ? 's' : ''} left</span>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:22px;font-weight:700;margin-top:6px;">$${fmt(netSpent)}</div>
+    </div>
   `;
 }
 
@@ -997,69 +1106,6 @@ function renderCategoryBudget() {
       </div>
     </div>
   `;
-}
-
-function renderQuickBudgetSummary() {
-  const now = new Date();
-  const txs = getMonthTxs(now.getMonth(), now.getFullYear());
-  const spent = { NEEDS: 0, WANTS: 0, SAVINGS: 0 };
-  const totals = { NEEDS: 0, WANTS: 0, SAVINGS: 0 };
-
-  Object.entries(CATEGORIES).forEach(([group, cats]) => {
-    if (group === 'REIMBURSEMENTS') return;
-    cats.forEach(c => {
-      totals[group] += (DATA.budgets[c.id] || 0);
-    });
-  });
-
-  txs.forEach(tx => {
-    const g = catGroup(tx.category);
-    if (g !== 'REIMBURSEMENTS') {
-      spent[g] = (spent[g] || 0) + tx.amount;
-    }
-  });
-
-  const reimb = txs.filter(tx => catGroup(tx.category) === 'REIMBURSEMENTS')
-                    .reduce((s, tx) => s + tx.amount, 0);
-
-  // Days remaining in month
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const daysLeft = daysInMonth - now.getDate();
-  const daysPct = Math.round((now.getDate() / daysInMonth) * 100);
-
-  let html = `<div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
-      <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);">This Month</span>
-      <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-tertiary);">${daysLeft} day${daysLeft !== 1 ? 's' : ''} left · ${daysPct}% through</span>
-    </div>`;
-
-  ['NEEDS', 'WANTS', 'SAVINGS'].forEach(group => {
-    const s = spent[group];
-    const b = totals[group];
-    const pct = b > 0 ? Math.min((s / b) * 100, 100) : 0;
-    const color = pct > 90 ? 'var(--red)' : pct > 70 ? 'var(--yellow)' : 'var(--green)';
-    html += `
-      <div style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
-          <span style="font-weight:600;">${group}</span>
-          <span style="font-family:var(--font-mono);">$${fmt(s)} / $${fmt(b)}</span>
-        </div>
-        <div class="budget-bar-wrap" style="width:100%;height:6px;">
-          <div class="budget-bar" style="width:${pct}%;background:${color};"></div>
-        </div>
-      </div>
-    `;
-  });
-
-  if (reimb > 0) {
-    html += `<div class="stat-row"><span class="stat-label">Reimbursements received</span><span class="stat-value" style="color:var(--green);">+$${fmt(reimb)}</span></div>`;
-  }
-
-  const totalSpent = spent.NEEDS + spent.WANTS + spent.SAVINGS;
-  const totalBudget = totals.NEEDS + totals.WANTS + totals.SAVINGS;
-  html += `<div class="stat-row" style="border-top:1px solid var(--bg-input);padding-top:8px;margin-top:4px;"><span class="stat-label">Total spent</span><span class="stat-value">$${fmt(totalSpent)} / $${fmt(totalBudget)}</span></div>`;
-  html += '</div>';
-  return html;
 }
 
 function attachAddListeners() {
@@ -1246,6 +1292,157 @@ function saveExpense() {
 }
 
 // ============================================================
+// PIN LOCK
+// ============================================================
+
+let pinInput = '';
+let pinSetupMode = null; // 'new' or 'change'
+let pinSetupStep = 1; // 1 = enter, 2 = confirm
+let pinSetupFirst = '';
+
+function renderPinEntry() {
+  const dots = [0,1,2,3].map(i =>
+    `<div class="pin-dot ${i < pinInput.length ? 'filled' : ''}"></div>`
+  ).join('');
+
+  return `
+    <div class="pin-overlay">
+      <div class="pin-title">Enter PIN</div>
+      <div class="pin-subtitle">Required to view this section</div>
+      <div class="pin-dots" id="pin-dots">${dots}</div>
+      <div class="pin-keypad">
+        ${[1,2,3,4,5,6,7,8,9].map(n => `<button class="pin-key" data-pin-key="${n}">${n}</button>`).join('')}
+        <button class="pin-key empty"></button>
+        <button class="pin-key" data-pin-key="0">0</button>
+        <button class="pin-key" data-pin-key="del">⌫</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderPinSetup() {
+  const dots = [0,1,2,3].map(i =>
+    `<div class="pin-dot ${i < pinInput.length ? 'filled' : ''}"></div>`
+  ).join('');
+
+  const title = pinSetupStep === 1 ? 'Create PIN' : 'Confirm PIN';
+  const subtitle = pinSetupStep === 1 ? 'Enter a 4-digit PIN' : 'Re-enter your PIN to confirm';
+
+  return `
+    <div class="pin-overlay">
+      <div class="pin-title">${title}</div>
+      <div class="pin-subtitle">${subtitle}</div>
+      <div class="pin-dots" id="pin-dots">${dots}</div>
+      <div class="pin-keypad">
+        ${[1,2,3,4,5,6,7,8,9].map(n => `<button class="pin-key" data-pin-setup-key="${n}">${n}</button>`).join('')}
+        <button class="pin-key empty"></button>
+        <button class="pin-key" data-pin-setup-key="0">0</button>
+        <button class="pin-key" data-pin-setup-key="del">⌫</button>
+      </div>
+      <button style="margin-top:20px;background:none;border:none;color:var(--text-tertiary);font-size:13px;font-family:var(--font-body);cursor:pointer;" id="btn-pin-cancel">Cancel</button>
+    </div>
+  `;
+}
+
+function attachPinListeners() {
+  document.querySelectorAll('[data-pin-key]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.pinKey;
+      if (key === 'del') {
+        pinInput = pinInput.slice(0, -1);
+        render();
+        return;
+      }
+      if (pinInput.length >= 4) return;
+      pinInput += key;
+
+      const dots = document.querySelectorAll('.pin-dot');
+      dots.forEach((d, i) => d.classList.toggle('filled', i < pinInput.length));
+
+      if (pinInput.length === 4) {
+        const storedPin = localStorage.getItem(PIN_STORAGE_KEY);
+        if (pinInput === storedPin) {
+          sessionUnlocked = true;
+          pinInput = '';
+          haptic();
+          render();
+        } else {
+          dots.forEach(d => { d.classList.remove('filled'); d.classList.add('error'); });
+          setTimeout(() => {
+            pinInput = '';
+            render();
+          }, 500);
+        }
+      }
+    });
+  });
+}
+
+function attachPinSetupListeners() {
+  document.querySelectorAll('[data-pin-setup-key]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.pinSetupKey;
+      if (key === 'del') {
+        pinInput = pinInput.slice(0, -1);
+        renderPinSetupDots();
+        return;
+      }
+      if (pinInput.length >= 4) return;
+      pinInput += key;
+
+      renderPinSetupDots();
+
+      if (pinInput.length === 4) {
+        if (pinSetupStep === 1) {
+          pinSetupFirst = pinInput;
+          pinInput = '';
+          pinSetupStep = 2;
+          setTimeout(() => render(), 200);
+        } else {
+          if (pinInput === pinSetupFirst) {
+            localStorage.setItem(PIN_STORAGE_KEY, pinInput);
+            sessionUnlocked = true;
+            pinInput = '';
+            pinSetupMode = null;
+            pinSetupStep = 1;
+            haptic();
+            showToast('PIN set');
+            currentTab = 'settings';
+            render();
+          } else {
+            const dots = document.querySelectorAll('.pin-dot');
+            dots.forEach(d => { d.classList.remove('filled'); d.classList.add('error'); });
+            setTimeout(() => {
+              pinInput = '';
+              pinSetupStep = 1;
+              pinSetupFirst = '';
+              render();
+            }, 500);
+          }
+        }
+      }
+    });
+  });
+
+  const cancelBtn = document.getElementById('btn-pin-cancel');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      pinSetupMode = null;
+      pinSetupStep = 1;
+      pinInput = '';
+      pinSetupFirst = '';
+      currentTab = 'settings';
+      render();
+    });
+  }
+}
+
+function renderPinSetupDots() {
+  const dots = document.querySelectorAll('.pin-dot');
+  dots.forEach((d, i) => d.classList.toggle('filled', i < pinInput.length));
+}
+
+// ============================================================
 // BUDGET VIEW
 // ============================================================
 
@@ -1258,6 +1455,57 @@ function renderBudgetView() {
   txs.forEach(tx => {
     spentByCat[tx.category] = (spentByCat[tx.category] || 0) + tx.amount;
   });
+
+  // Summary card at top
+  const summarySpent = { NEEDS: 0, WANTS: 0, SAVINGS: 0 };
+  const summaryTotals = { NEEDS: 0, WANTS: 0, SAVINGS: 0 };
+  Object.entries(CATEGORIES).forEach(([group, cats]) => {
+    if (group === 'REIMBURSEMENTS') return;
+    cats.forEach(c => { summaryTotals[group] += (DATA.budgets[c.id] || 0); });
+  });
+  txs.forEach(tx => {
+    const g = catGroup(tx.category);
+    if (g !== 'REIMBURSEMENTS') summarySpent[g] = (summarySpent[g] || 0) + tx.amount;
+  });
+  const summaryReimb = txs.filter(tx => catGroup(tx.category) === 'REIMBURSEMENTS')
+                          .reduce((s, tx) => s + tx.amount, 0);
+
+  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const isCurrentMonth = currentMonth === new Date().getMonth() && currentYear === new Date().getFullYear();
+  const daysLeft = isCurrentMonth ? daysInMonth - new Date().getDate() : 0;
+  const daysPct = isCurrentMonth ? Math.round((new Date().getDate() / daysInMonth) * 100) : 100;
+
+  html += `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
+      <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);">Summary</span>
+      ${isCurrentMonth ? `<span style="font-size:11px;font-family:var(--font-mono);color:var(--text-tertiary);">${daysLeft} day${daysLeft !== 1 ? 's' : ''} left · ${daysPct}% through</span>` : ''}
+    </div>`;
+
+  ['NEEDS', 'WANTS', 'SAVINGS'].forEach(group => {
+    const s = summarySpent[group];
+    const b = summaryTotals[group];
+    const pct = b > 0 ? Math.min((s / b) * 100, 100) : 0;
+    const color = pct > 90 ? 'var(--red)' : pct > 70 ? 'var(--yellow)' : 'var(--green)';
+    html += `
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
+          <span style="font-weight:600;">${group}</span>
+          <span style="font-family:var(--font-mono);">$${fmt(s)} / $${fmt(b)}</span>
+        </div>
+        <div class="budget-bar-wrap" style="width:100%;height:6px;">
+          <div class="budget-bar" style="width:${pct}%;background:${color};"></div>
+        </div>
+      </div>
+    `;
+  });
+
+  if (summaryReimb > 0) {
+    html += `<div class="stat-row"><span class="stat-label">Reimbursements</span><span class="stat-value" style="color:var(--green);">+$${fmt(summaryReimb)}</span></div>`;
+  }
+  const totalSpentSummary = summarySpent.NEEDS + summarySpent.WANTS + summarySpent.SAVINGS;
+  const totalBudgetSummary = summaryTotals.NEEDS + summaryTotals.WANTS + summaryTotals.SAVINGS;
+  html += `<div class="stat-row" style="border-top:1px solid var(--bg-input);padding-top:8px;margin-top:4px;"><span class="stat-label">Total spent</span><span class="stat-value">$${fmt(totalSpentSummary)} / $${fmt(totalBudgetSummary)}</span></div>`;
+  html += '</div>';
 
   // Previous month for comparison
   let prevM = currentMonth - 1, prevY = currentYear;
@@ -1545,6 +1793,27 @@ function renderSettingsView() {
     </div>
   `;
 
+  // Security - PIN Lock
+  const hasPin = !!localStorage.getItem(PIN_STORAGE_KEY);
+  html += `
+    <div class="card">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);margin-bottom:10px;">Security</div>
+      <div class="setting-row" style="${hasPin ? '' : 'border-bottom:none;'}">
+        <span class="setting-label">PIN Lock</span>
+        <button class="btn-small btn ${hasPin ? 'btn-primary' : 'btn-secondary'}" id="btn-pin-toggle"
+                style="width:60px;padding:6px 12px;font-size:12px;">${hasPin ? 'ON' : 'OFF'}</button>
+      </div>
+      ${hasPin ? `
+      <div class="setting-row" style="border-bottom:none;">
+        <span class="setting-label">Change PIN</span>
+        <button class="btn-small btn btn-secondary" id="btn-pin-change"
+                style="padding:6px 12px;font-size:12px;">Change</button>
+      </div>
+      ` : ''}
+      <p style="font-size:11px;color:var(--text-tertiary);margin-top:4px;">Locks Budget, History, and Settings tabs. Add screen stays open for quick entry.</p>
+    </div>
+  `;
+
   // Net income
   html += `
     <div class="card">
@@ -1670,6 +1939,40 @@ function attachSettingsListeners() {
         importInput.value = '';
       };
       reader.readAsText(file);
+    });
+  }
+
+  // PIN toggle
+  const pinToggle = document.getElementById('btn-pin-toggle');
+  if (pinToggle) {
+    pinToggle.addEventListener('click', () => {
+      const hasPin = !!localStorage.getItem(PIN_STORAGE_KEY);
+      if (hasPin) {
+        localStorage.removeItem(PIN_STORAGE_KEY);
+        sessionUnlocked = false;
+        showToast('PIN removed');
+        render();
+      } else {
+        pinSetupMode = 'new';
+        pinSetupStep = 1;
+        pinInput = '';
+        pinSetupFirst = '';
+        currentTab = 'pinsetup';
+        render();
+      }
+    });
+  }
+
+  // PIN change
+  const pinChange = document.getElementById('btn-pin-change');
+  if (pinChange) {
+    pinChange.addEventListener('click', () => {
+      pinSetupMode = 'change';
+      pinSetupStep = 1;
+      pinInput = '';
+      pinSetupFirst = '';
+      currentTab = 'pinsetup';
+      render();
     });
   }
 }
