@@ -667,9 +667,9 @@ const CATEGORIES = {
     { id: 'pet-needs', label: 'PET — needs' },
     { id: 'util-apt', label: 'UTIL — apt (sewer/trash/water)' },
     { id: 'util-elec', label: 'UTIL — electricity & gas' },
-    { id: 'util-internet', label: 'UTIL — internet/data' },
+    { id: 'util-house-internet', label: 'UTIL — house internet' },
+    { id: 'util-device-data', label: 'UTIL — device data' },
     { id: 'util-phone', label: 'UTIL — phone' },
-    { id: 'parking', label: 'PARKING' },
   ],
   WANTS: [
     { id: 'adv-events', label: 'ADV — events' },
@@ -680,6 +680,7 @@ const CATEGORIES = {
     { id: 'home-furniture', label: 'HOME — furniture & appliances' },
     { id: 'kids-wants', label: 'KIDS — wants' },
     { id: 'misc', label: 'MISC' },
+    { id: 'parking', label: 'PARKING' },
     { id: 'personal', label: 'PERSONAL ITEMS' },
     { id: 'pet-wants', label: 'PET — wants' },
     { id: 'subs', label: 'SUBSCRIPTIONS/DUES' },
@@ -690,7 +691,7 @@ const CATEGORIES = {
   ],
   SAVINGS: [
     { id: 'emergency', label: 'EMERGENCY FUND' },
-    { id: 'savingsplus', label: 'SAVINGS+' },
+    { id: 'goals', label: 'GOALS' },
     { id: 'extra-debt', label: 'EXTRA DEBT' },
   ],
   REIMBURSEMENTS: [
@@ -732,31 +733,29 @@ function saveData(data) {
 
 function getDefaults() {
   const budgets = {};
-  // Distribute defaults — user can adjust in settings
-  const needsCats = CATEGORIES.NEEDS;
-  const wantsCats = CATEGORIES.WANTS;
-  const savingsCats = CATEGORIES.SAVINGS;
 
-  // Sensible defaults for NEEDS ($2,700 total)
+  // NEEDS — from Budget Summary 60/30/10
   const needsDefaults = {
-    'home-rent': 1200, 'food-groceries': 400, 'util-elec': 150, 'util-internet': 60,
-    'util-phone': 50, 'util-apt': 80, 'auto-gas': 120, 'auto-payment': 300,
-    'ins-auto': 100, 'ins-health': 0, 'ins-home': 0, 'ins-life': 0,
-    'health-medical': 50, 'health-meds': 20, 'health-supplies': 20,
-    'auto-repair': 50, 'auto-licenses': 0, 'debt-min': 0, 'home-supplies': 30,
-    'kids-needs': 0, 'pet-needs': 0, 'parking': 70,
+    'home-rent': 1700, 'debt-min': 500, 'food-groceries': 300,
+    'auto-gas': 120, 'ins-auto': 110,
+    'util-elec': 105, 'util-house-internet': 56, 'util-device-data': 60,
+    'util-apt': 56, 'util-phone': 0,
+    'health-medical': 50, 'health-meds': 40, 'health-supplies': 0,
+    'home-supplies': 30,
+    'auto-payment': 0, 'auto-repair': 0, 'auto-licenses': 0,
+    'ins-health': 0, 'ins-home': 0, 'ins-life': 0,
+    'kids-needs': 0, 'pet-needs': 0,
   };
-  // WANTS ($1,620 total)
+  // WANTS — from Budget Summary 60/30/10
   const wantsDefaults = {
-    'food-restaurants': 300, 'adv-events': 100, 'adv-vacations': 100,
-    'subs': 100, 'personal': 150, 'education': 50, 'donations': 50,
-    'misc': 120, 'home-furniture': 50, 'travel': 100,
-    'gfts-given': 100, 'gfts-received': 0, 'gfts-covered': 50,
-    'kids-wants': 0, 'pet-wants': 50,
+    'food-restaurants': 300, 'subs': 294, 'personal': 150, 'misc': 120,
+    'adv-events': 100, 'adv-vacations': 100, 'travel': 100, 'gfts-given': 100,
+    'pet-wants': 50, 'parking': 0, 'donations': 0, 'education': 0,
+    'home-furniture': 0, 'kids-wants': 0, 'gfts-received': 0, 'gfts-covered': 0,
   };
-  // SAVINGS ($1,080 total)
+  // SAVINGS — from Budget Summary 60/30/10
   const savingsDefaults = {
-    'emergency': 500, 'savingsplus': 400, 'extra-debt': 180,
+    'goals': 544, 'emergency': 0, 'extra-debt': 0,
   };
 
   Object.assign(budgets, needsDefaults, wantsDefaults, savingsDefaults);
@@ -765,7 +764,7 @@ function getDefaults() {
   return {
     transactions: [],
     budgets: budgets,
-    netIncome: 5400,
+    netIncome: 5444.12,
   };
 }
 
@@ -1863,7 +1862,7 @@ function renderSettingsView() {
   ['NEEDS', 'WANTS', 'SAVINGS'].forEach(group => {
     const cats = CATEGORIES[group];
     const groupTotal = cats.reduce((s, c) => s + (DATA.budgets[c.id] || 0), 0);
-    const target = group === 'NEEDS' ? DATA.netIncome * 0.5 : group === 'WANTS' ? DATA.netIncome * 0.3 : DATA.netIncome * 0.2;
+    const target = group === 'NEEDS' ? DATA.netIncome * 0.6 : group === 'WANTS' ? DATA.netIncome * 0.3 : DATA.netIncome * 0.1;
     const diff = groupTotal - target;
 
     html += `
