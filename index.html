@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Budget">
-<meta name="theme-color" content="#1a1a1a">
+<meta name="theme-color" content="#ffffff">
 <title>Budget Tracker</title>
 <style>
 :root {
@@ -54,22 +54,16 @@
 
 html {
   height: 100%;
-  background: var(--bg-card);
 }
 body {
   font-family: var(--font-body);
-  background: var(--bg-card);
+  background: var(--bg);
   color: var(--text);
   height: 100%;
   margin: 0;
   padding: 0;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
 }
 
 #app {
@@ -78,11 +72,7 @@ body {
   height: 100%;
   max-width: 430px;
   margin: 0 auto;
-  background: var(--bg);
 }
-
-/* STATUS BAR SPACER */
-.status-bar { height: var(--safe-top); background: var(--bg); flex-shrink: 0; }
 
 /* HEADER */
 .header {
@@ -107,15 +97,14 @@ body {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 0 16px 16px;
+  padding: 0 16px calc(16px + var(--safe-bottom));
 }
 
 /* TAB BAR */
 .tab-bar {
   display: flex;
   background: var(--bg-card);
-  border-top: 1px solid var(--border);
-  padding-bottom: calc(var(--safe-bottom) + 12px);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .tab {
@@ -123,7 +112,7 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 10px 0 4px;
+  padding: 6px 0 8px;
   border: none;
   background: none;
   color: var(--text-tertiary);
@@ -624,12 +613,6 @@ select.form-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http
 </head>
 <body>
 <div id="app">
-  <div class="status-bar"></div>
-  <div class="header">
-    <h1 id="page-title">Add Expense</h1>
-    <div class="header-sub" id="page-subtitle"></div>
-  </div>
-  <div class="content" id="main-content"></div>
   <div class="tab-bar">
     <button class="tab active" data-tab="add" onclick="switchTab('add')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
@@ -648,6 +631,11 @@ select.form-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http
       <span>Settings</span>
     </button>
   </div>
+  <div class="header">
+    <h1 id="page-title">Add Expense</h1>
+    <div class="header-sub" id="page-subtitle"></div>
+  </div>
+  <div class="content" id="main-content"></div>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -1968,7 +1956,7 @@ function attachSettingsListeners() {
       const newTheme = isDark ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', newTheme);
       localStorage.setItem('budget_theme', newTheme);
-      document.querySelector('meta[name="theme-color"]').content = newTheme === 'dark' ? '#1a1a1a' : '#f5f5f0';
+      document.querySelector('meta[name="theme-color"]').content = newTheme === 'dark' ? '#2a2a2a' : '#ffffff';
       render();
     });
   }
@@ -2281,7 +2269,7 @@ function initPullToRefresh() {
 const savedTheme = localStorage.getItem('budget_theme');
 if (savedTheme === 'dark') {
   document.documentElement.setAttribute('data-theme', 'dark');
-  document.querySelector('meta[name="theme-color"]').content = '#1a1a1a';
+  document.querySelector('meta[name="theme-color"]').content = '#2a2a2a';
 }
 
 // Restore form state (survives accidental close)
