@@ -105,7 +105,7 @@ html, body {
   display: flex;
   background: var(--bg-card);
   border-top: 1px solid var(--border);
-  padding-bottom: var(--safe-bottom);
+  padding-bottom: calc(var(--safe-bottom) + 12px);
   flex-shrink: 0;
 }
 .tab {
@@ -113,7 +113,7 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 0 6px;
+  padding: 10px 0 4px;
   border: none;
   background: none;
   color: var(--text-tertiary);
@@ -785,12 +785,19 @@ let formState = {
   expectedBack: '',
   notes: '',
   date: '',
+  account: '',
 };
 let editingId = null;
 let sessionUnlocked = false;
 let lastActivity = Date.now();
 const PIN_STORAGE_KEY = 'budget_pin';
 const PIN_TIMEOUT_KEY = 'budget_pin_timeout';
+const LAST_ACCOUNT_KEY = 'budget_last_account';
+
+const ACCOUNTS = [
+  'Golden 1', 'Bank of America', 'Chase', 'Citi', 'Apple Card',
+  'Venmo', 'PayPal', 'Privacy.com', 'Cash', 'Apple Cash'
+];
 
 function getTimeoutMs() {
   const val = localStorage.getItem(PIN_TIMEOUT_KEY);
@@ -823,7 +830,7 @@ function restoreFormState() {
 }
 
 function clearFormState() {
-  formState = { amount: '', category: '', type: 'solo', splitWith: '', expectedBack: '', notes: '', date: '' };
+  formState = { amount: '', category: '', type: 'solo', splitWith: '', expectedBack: '', notes: '', date: '', account: '' };
   editingId = null;
   localStorage.removeItem(FORM_STORAGE_KEY);
 }
@@ -990,6 +997,12 @@ function renderAddView() {
 
   const selectedLabel = formState.category ? catLabel(formState.category) : '';
 
+  // Default to last-used account if not set
+  if (!formState.account && !editingId) {
+    const lastAccount = localStorage.getItem(LAST_ACCOUNT_KEY);
+    if (lastAccount && ACCOUNTS.includes(lastAccount)) formState.account = lastAccount;
+  }
+
   return `
     <div class="card">
       <div class="form-group">
@@ -1046,6 +1059,14 @@ function renderAddView() {
         </div>
       </div>
       ` : ''}
+
+      <div class="form-group">
+        <label class="form-label">Account</label>
+        <select class="form-input" id="inp-account">
+          <option value="">Select account...</option>
+          ${ACCOUNTS.map(a => `<option value="${a}" ${formState.account === a ? 'selected' : ''}>${a}</option>`).join('')}
+        </select>
+      </div>
 
       <div class="form-group">
         <label class="form-label">Notes (optional)</label>
@@ -1194,6 +1215,10 @@ function attachAddListeners() {
   const notesEl = document.getElementById('inp-notes');
   if (notesEl) notesEl.addEventListener('input', e => { formState.notes = e.target.value; saveFormState(); });
 
+  // Account
+  const acctEl = document.getElementById('inp-account');
+  if (acctEl) acctEl.addEventListener('change', e => { formState.account = e.target.value; saveFormState(); });
+
   // Date
   const dateEl = document.getElementById('inp-date');
   if (dateEl) dateEl.addEventListener('change', e => { formState.date = e.target.value; saveFormState(); });
@@ -1251,6 +1276,7 @@ function saveExpense() {
   const amount = parseFloat(formState.amount);
   if (!amount || amount <= 0) { showToast('Enter an amount'); return; }
   if (!formState.category) { showToast('Pick a category'); return; }
+  if (!formState.account) { showToast('Select an account'); return; }
 
   // Determine date — use override if set, otherwise now
   let txDate;
@@ -1263,6 +1289,9 @@ function saveExpense() {
     txDate = new Date().toISOString();
   }
 
+  // Track last-used account
+  localStorage.setItem(LAST_ACCOUNT_KEY, formState.account);
+
   if (editingId) {
     // Update existing transaction
     const idx = DATA.transactions.findIndex(tx => tx.id === editingId);
@@ -1273,6 +1302,7 @@ function saveExpense() {
       DATA.transactions[idx].splitWith = formState.splitWith || null;
       DATA.transactions[idx].expectedBack = formState.expectedBack ? parseFloat(formState.expectedBack) : null;
       DATA.transactions[idx].notes = formState.notes || null;
+      DATA.transactions[idx].account = formState.account;
       if (formState.date) DATA.transactions[idx].date = txDate;
     }
     saveData(DATA);
@@ -1292,6 +1322,7 @@ function saveExpense() {
     splitWith: formState.splitWith || null,
     expectedBack: formState.expectedBack ? parseFloat(formState.expectedBack) : null,
     notes: formState.notes || null,
+    account: formState.account,
   };
 
   DATA.transactions.push(tx);
@@ -1693,6 +1724,7 @@ function renderHistoryView() {
             <div class="tx-info">
               <div class="tx-cat">${catLabel(tx.category)}</div>
               ${tx.notes ? `<div class="tx-note">${tx.notes}</div>` : ''}
+              ${tx.account ? `<div style="font-size:11px;color:var(--text-tertiary);margin-top:2px;">${tx.account}</div>` : ''}
               ${badge}
               ${tx.expectedBack ? `<div style="font-size:11px;color:var(--accent);margin-top:2px;">Expects $${fmt(tx.expectedBack)} back</div>` : ''}
             </div>
@@ -1737,6 +1769,7 @@ function editTx(id) {
     expectedBack: tx.expectedBack ? tx.expectedBack.toString() : '',
     notes: tx.notes || '',
     date: dateStr,
+    account: tx.account || '',
   };
   saveFormState();
   switchTab('add');
@@ -2028,19 +2061,28 @@ function exportCSV(txs, filename) {
 
   if (txs.length === 0) { showToast('No transactions to export'); return; }
 
-  const headers = ['Date','Time','Amount','Category','Group','Type','Split With','Expected Back','Notes'];
+  const headers = ['Date','Description','Amount','Category','Subcategory','Source','Account','Split Status','Split With','Expected Back','For Partner','Notes'];
   const rows = txs.map(tx => {
     const d = new Date(tx.date);
+    const label = catLabel(tx.category);
+    const parts = label.split(' — ');
+    const cat = parts[0] || label;
+    const subcat = parts[1] || '';
+    const forPartner = (tx.type === 'gift' && tx.splitWith === 'partner') ? 'Yes' : 'No';
+
     return [
       d.toLocaleDateString('en-US'),
-      d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      (tx.notes || '').replace(/"/g, '""'),
       tx.amount.toFixed(2),
-      catLabel(tx.category),
-      catGroup(tx.category),
-      tx.type,
+      cat,
+      subcat,
+      'PWA',
+      tx.account || '',
+      tx.type || 'solo',
       tx.splitWith || '',
       tx.expectedBack ? tx.expectedBack.toFixed(2) : '',
-      (tx.notes || '').replace(/,/g, ';'),
+      forPartner,
+      (tx.notes || '').replace(/"/g, '""'),
     ].map(v => `"${v}"`).join(',');
   });
 
@@ -2077,16 +2119,26 @@ function importCSV(csvText) {
   const timeIdx = header.indexOf('Time');
   const amtIdx = header.indexOf('Amount');
   const catIdx = header.indexOf('Category');
-  const typeIdx = header.indexOf('Type');
+  const subcatIdx = header.indexOf('Subcategory');
+  const acctIdx = header.indexOf('Account');
+  const typeIdx = header.indexOf('Type') !== -1 ? header.indexOf('Type') : header.indexOf('Split Status');
   const splitIdx = header.indexOf('Split With');
   const expIdx = header.indexOf('Expected Back');
   const notesIdx = header.indexOf('Notes');
+  const descIdx = header.indexOf('Description');
 
-  if (amtIdx === -1 || catIdx === -1) throw new Error('Missing required columns (Amount, Category)');
+  if (amtIdx === -1) throw new Error('Missing required Amount column');
 
-  // Reverse-lookup: label → id
+  // Reverse-lookup: label → id and "category — subcategory" → id
   const labelToId = {};
-  ALL_CATS.forEach(c => { labelToId[c.label.toLowerCase()] = c.id; });
+  ALL_CATS.forEach(c => {
+    labelToId[c.label.toLowerCase()] = c.id;
+    // Also support split format: "FOOD" + "groceries" → match "FOOD — groceries"
+    const parts = c.label.split(' — ');
+    if (parts.length === 2) {
+      labelToId[(parts[0] + ' — ' + parts[1]).toLowerCase()] = c.id;
+    }
+  });
 
   let imported = 0, skipped = 0;
 
@@ -2106,15 +2158,25 @@ function importCSV(csvText) {
     const amount = parseFloat(fields[amtIdx]);
     if (!amount || amount <= 0) { skipped++; continue; }
 
-    const catLabelRaw = (fields[catIdx] || '').toLowerCase();
-    const catId = labelToId[catLabelRaw];
+    // Match category — try full label first, then "Category — Subcategory"
+    let catId = null;
+    if (catIdx !== -1) {
+      const catRaw = (fields[catIdx] || '').trim();
+      const subcatRaw = subcatIdx !== -1 ? (fields[subcatIdx] || '').trim() : '';
+      if (subcatRaw) {
+        catId = labelToId[(catRaw + ' — ' + subcatRaw).toLowerCase()];
+      }
+      if (!catId) {
+        catId = labelToId[catRaw.toLowerCase()];
+      }
+    }
     if (!catId) { skipped++; continue; }
 
     // Parse date
     let txDate;
     try {
       const dateStr = fields[dateIdx] || '';
-      const timeStr = fields[timeIdx] || '12:00 PM';
+      const timeStr = timeIdx !== -1 ? (fields[timeIdx] || '12:00 PM') : '12:00 PM';
       txDate = new Date(dateStr + ' ' + timeStr).toISOString();
     } catch (e) {
       txDate = new Date().toISOString();
@@ -2128,7 +2190,8 @@ function importCSV(csvText) {
       type: (fields[typeIdx] || 'solo').toLowerCase(),
       splitWith: fields[splitIdx] || null,
       expectedBack: fields[expIdx] ? parseFloat(fields[expIdx]) : null,
-      notes: fields[notesIdx] || null,
+      notes: (notesIdx !== -1 ? fields[notesIdx] : (descIdx !== -1 ? fields[descIdx] : null)) || null,
+      account: acctIdx !== -1 ? (fields[acctIdx] || null) : null,
     };
 
     DATA.transactions.push(tx);
