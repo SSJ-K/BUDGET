@@ -1938,6 +1938,7 @@ function attachSettingsListeners() {
       DATA.netIncome = parseFloat(e.target.value) || 0;
       saveData(DATA);
       showToast('Income updated');
+      render();
     });
   }
 
