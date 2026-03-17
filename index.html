@@ -653,7 +653,7 @@ const CATEGORIES = {
     { id: 'debt-min', label: 'DEBT — minimum payments' },
     { id: 'food-groceries', label: 'FOOD — groceries' },
     { id: 'health-medical', label: 'HEALTH — medical' },
-    { id: 'health-meds', label: 'HEALTH — medications' },
+    { id: 'health-meds', label: 'HEALTH' },
     { id: 'health-supplies', label: 'HEALTH — supplies' },
     { id: 'home-rent', label: 'HOME — mortgage/rent' },
     { id: 'home-supplies', label: 'HOME — supplies' },
@@ -734,11 +734,11 @@ function getDefaults() {
 
   // NEEDS — from Budget Summary 60/30/10
   const needsDefaults = {
-    'home-rent': 1700, 'debt-min': 500, 'food-groceries': 300,
-    'auto-gas': 120, 'ins-auto': 110,
+    'home-rent': 1700, 'debt-min': 500, 'food-groceries': 500,
+    'auto-gas': 270, 'ins-auto': 110,
     'util-elec': 105, 'util-house-internet': 56, 'util-device-data': 60,
     'util-apt': 56, 'util-phone': 0,
-    'health-medical': 50, 'health-meds': 40, 'health-supplies': 0,
+    'health-medical': 50, 'health-meds': 99.12, 'health-supplies': 0,
     'home-supplies': 30,
     'auto-payment': 0, 'auto-repair': 0, 'auto-licenses': 0,
     'ins-health': 0, 'ins-home': 0, 'ins-life': 0,
@@ -746,12 +746,12 @@ function getDefaults() {
   };
   // WANTS — from Budget Summary 60/30/10
   const wantsDefaults = {
-    'food-restaurants': 300, 'subs': 294, 'personal': 150, 'misc': 120,
-    'adv-events': 100, 'adv-vacations': 100, 'travel': 100, 'gfts-given': 100,
+    'food-restaurants': 300, 'subs': 294, 'personal': 150, 'misc': 170,
+    'adv-events': 100, 'adv-vacations': 100, 'travel': 0, 'gfts-given': 200,
     'pet-wants': 50, 'parking': 0, 'donations': 0, 'education': 0,
     'home-furniture': 0, 'kids-wants': 0, 'gfts-received': 0, 'gfts-covered': 0,
   };
-  // SAVINGS — from Budget Summary 60/30/10
+  // SAVINGS — 10% of net
   const savingsDefaults = {
     'goals': 544, 'emergency': 0, 'extra-debt': 0,
   };
@@ -763,6 +763,8 @@ function getDefaults() {
     transactions: [],
     budgets: budgets,
     netIncome: 5444.12,
+    grossIncome: 9320.73,
+    prePaycheckSavings: 1248.66,
   };
 }
 
@@ -1533,16 +1535,21 @@ function renderBudgetView() {
   ['NEEDS', 'WANTS', 'SAVINGS'].forEach(group => {
     const s = summarySpent[group];
     const b = summaryTotals[group];
+    const remaining = b - s;
     const pct = b > 0 ? Math.min((s / b) * 100, 100) : 0;
     const color = pct > 90 ? 'var(--red)' : pct > 70 ? 'var(--yellow)' : 'var(--green)';
+    const netPct = DATA.netIncome > 0 ? ((b / DATA.netIncome) * 100).toFixed(0) : 0;
     html += `
       <div style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
-          <span style="font-weight:600;">${group}</span>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px;">
+          <span style="font-weight:600;">${group} <span style="font-weight:400;font-size:11px;color:var(--text-tertiary);">${netPct}%</span></span>
           <span style="font-family:var(--font-mono);">$${fmt(s)} / $${fmt(b)}</span>
         </div>
-        <div class="budget-bar-wrap" style="width:100%;height:6px;">
+        <div class="budget-bar-wrap" style="width:100%;height:6px;margin-bottom:2px;">
           <div class="budget-bar" style="width:${pct}%;background:${color};"></div>
+        </div>
+        <div style="text-align:right;font-size:11px;font-family:var(--font-mono);color:${remaining >= 0 ? 'var(--green)' : 'var(--red)'};">
+          ${remaining >= 0 ? '$' + fmt(remaining) + ' left' : '$' + fmt(Math.abs(remaining)) + ' over'}
         </div>
       </div>
     `;
@@ -1553,7 +1560,27 @@ function renderBudgetView() {
   }
   const totalSpentSummary = summarySpent.NEEDS + summarySpent.WANTS + summarySpent.SAVINGS;
   const totalBudgetSummary = summaryTotals.NEEDS + summaryTotals.WANTS + summaryTotals.SAVINGS;
+  const totalLeft = totalBudgetSummary - totalSpentSummary;
+  const unallocated = DATA.netIncome - totalBudgetSummary;
   html += `<div class="stat-row" style="border-top:1px solid var(--bg-input);padding-top:8px;margin-top:4px;"><span class="stat-label">Total spent</span><span class="stat-value">$${fmt(totalSpentSummary)} / $${fmt(totalBudgetSummary)}</span></div>`;
+  html += `<div class="stat-row"><span class="stat-label" style="font-weight:600;">Total left</span><span class="stat-value" style="font-weight:700;color:${totalLeft >= 0 ? 'var(--green)' : 'var(--red)'};">$${fmt(Math.abs(totalLeft))}${totalLeft < 0 ? ' over' : ''}</span></div>`;
+  if (Math.abs(unallocated) > 1) {
+    const overAlloc = unallocated < 0;
+    html += `<div class="stat-row"><span class="stat-label">${overAlloc ? 'Over-allocated' : 'Unallocated buffer'}</span><span class="stat-value" style="color:${overAlloc ? 'var(--red)' : 'var(--text-tertiary)'};">${overAlloc ? '+' : ''}$${fmt(Math.abs(unallocated))}</span></div>`;
+  }
+
+  // Pre-paycheck savings context
+  const preSav = DATA.prePaycheckSavings || 0;
+  if (preSav > 0) {
+    const gross = DATA.grossIncome || DATA.netIncome;
+    const totalSavings = preSav + summaryTotals.SAVINGS;
+    const totalSavPct = gross > 0 ? ((totalSavings / gross) * 100).toFixed(1) : 0;
+    html += `<div style="border-top:1px solid var(--bg-input);padding-top:8px;margin-top:4px;">
+      <div class="stat-row"><span class="stat-label">Pre-paycheck savings</span><span class="stat-value">$${fmt(preSav)}/mo</span></div>
+      <div class="stat-row"><span class="stat-label" style="font-weight:600;">True savings rate</span><span class="stat-value" style="color:var(--green);">${totalSavPct}% <span style="font-size:10px;color:var(--text-tertiary);">of gross</span></span></div>
+    </div>`;
+  }
+
   html += '</div>';
 
   // Previous month for comparison
@@ -1589,6 +1616,8 @@ function renderBudgetView() {
       deltaHtml = `<span class="month-delta" style="color:${deltaColor};">${arrow} $${fmt(Math.abs(groupDelta))}</span>`;
     }
 
+    const groupRemaining = groupBudget - groupSpent;
+
     html += `
       <div class="budget-section">
         <div class="budget-section-header">
@@ -1597,8 +1626,11 @@ function renderBudgetView() {
             $${fmt(groupSpent)} / $${fmt(groupBudget)}${deltaHtml}
           </span>
         </div>
-        <div class="budget-bar-wrap" style="width:100%;height:6px;margin-bottom:8px;">
+        <div class="budget-bar-wrap" style="width:100%;height:6px;margin-bottom:4px;">
           <div class="budget-bar" style="width:${groupPct}%;background:${groupColor};"></div>
+        </div>
+        <div style="text-align:right;font-size:11px;font-family:var(--font-mono);color:${groupRemaining >= 0 ? 'var(--green)' : 'var(--red)'};margin-bottom:8px;padding:0 2px;">
+          ${groupRemaining >= 0 ? '$' + fmt(groupRemaining) + ' left' : '$' + fmt(Math.abs(groupRemaining)) + ' over'}
         </div>
         <div class="card" style="padding:4px 14px;">
     `;
@@ -1628,33 +1660,6 @@ function renderBudgetView() {
 
     html += '</div></div>';
   });
-
-  // Reimbursements
-  const reimb = txs.filter(tx => catGroup(tx.category) === 'REIMBURSEMENTS')
-                    .reduce((s, tx) => s + tx.amount, 0);
-  if (reimb > 0) {
-    html += `<div class="card"><div class="stat-row"><span class="stat-label">Reimbursements received</span><span class="stat-value" style="color:var(--green);">+$${fmt(reimb)}</span></div></div>`;
-  }
-
-  // Net summary
-  const totalSpent = txs.filter(tx => catGroup(tx.category) !== 'REIMBURSEMENTS')
-                        .reduce((s, tx) => s + tx.amount, 0);
-  const netSpent = totalSpent - reimb;
-
-  html += `
-    <div class="card">
-      <div class="stat-row"><span class="stat-label">Gross spending</span><span class="stat-value">$${fmt(totalSpent)}</span></div>
-      ${reimb > 0 ? `<div class="stat-row"><span class="stat-label">Reimbursements</span><span class="stat-value" style="color:var(--green);">-$${fmt(reimb)}</span></div>` : ''}
-      <div class="stat-row" style="border-top:1px solid var(--bg-input);padding-top:8px;margin-top:4px;">
-        <span class="stat-label" style="font-weight:600;">Net spending</span>
-        <span class="stat-value" style="font-weight:700;">$${fmt(netSpent)}</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">Remaining budget</span>
-        <span class="stat-value" style="color:${DATA.netIncome - netSpent > 0 ? 'var(--green)' : 'var(--red)'};">$${fmt(DATA.netIncome - netSpent)}</span>
-      </div>
-    </div>
-  `;
 
   return html;
 }
@@ -1876,14 +1881,29 @@ function renderSettingsView() {
     </div>
   `;
 
-  // Net income
+  // Income
   html += `
     <div class="card">
-      <div class="form-group" style="margin-bottom:0;">
-        <label class="form-label">Monthly Net Income</label>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);margin-bottom:10px;">Income</div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label">Monthly Gross Income</label>
+        <div class="amount-input-wrap">
+          <input type="number" inputmode="decimal" class="form-input amount-input" id="inp-gross-income"
+                 value="${DATA.grossIncome || 0}" style="font-size:18px;">
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label">Monthly Net Income <span style="font-weight:400;text-transform:none;letter-spacing:0;">(take-home)</span></label>
         <div class="amount-input-wrap">
           <input type="number" inputmode="decimal" class="form-input amount-input" id="inp-net-income"
                  value="${DATA.netIncome}" style="font-size:18px;">
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label class="form-label">Pre-Paycheck Savings <span style="font-weight:400;text-transform:none;letter-spacing:0;">(pension + 457 + other)</span></label>
+        <div class="amount-input-wrap">
+          <input type="number" inputmode="decimal" class="form-input amount-input" id="inp-pre-savings"
+                 value="${DATA.prePaycheckSavings || 0}" style="font-size:18px;">
         </div>
       </div>
     </div>
@@ -1961,13 +1981,35 @@ function attachSettingsListeners() {
     });
   }
 
+  // Gross income
+  const grossEl = document.getElementById('inp-gross-income');
+  if (grossEl) {
+    grossEl.addEventListener('change', e => {
+      DATA.grossIncome = parseFloat(e.target.value) || 0;
+      saveData(DATA);
+      showToast('Gross income updated');
+      render();
+    });
+  }
+
   // Net income
   const incEl = document.getElementById('inp-net-income');
   if (incEl) {
     incEl.addEventListener('change', e => {
       DATA.netIncome = parseFloat(e.target.value) || 0;
       saveData(DATA);
-      showToast('Income updated');
+      showToast('Net income updated');
+      render();
+    });
+  }
+
+  // Pre-paycheck savings
+  const preSavEl = document.getElementById('inp-pre-savings');
+  if (preSavEl) {
+    preSavEl.addEventListener('change', e => {
+      DATA.prePaycheckSavings = parseFloat(e.target.value) || 0;
+      saveData(DATA);
+      showToast('Pre-paycheck savings updated');
       render();
     });
   }
