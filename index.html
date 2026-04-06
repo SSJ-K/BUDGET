@@ -354,12 +354,27 @@ select.form-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http
 .tx-edit-btn:active { color: var(--text); }
 
 .date-group-header {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--text-tertiary);
-  padding: 12px 0 4px;
+  color: var(--text);
+  padding: 8px 12px;
+  margin: 0 -14px;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.date-group-header:first-child {
+  border-radius: 0;
+}
+.date-group-total {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
 /* CATEGORY SEARCH */
@@ -1710,9 +1725,10 @@ function renderHistoryView() {
     groups[d].push(tx);
   });
 
-  html += '<div class="card" style="padding:4px 14px;">';
+  html += '<div class="card" style="padding:0 14px;">';
   Object.entries(groups).forEach(([date, items]) => {
-    html += `<div class="date-group-header">${date}</div>`;
+    const dayTotal = items.reduce((s, tx) => s + tx.amount, 0);
+    html += `<div class="date-group-header"><span>${date}</span><span class="date-group-total">$${fmt(dayTotal)}</span></div>`;
     items.forEach(tx => {
       let badge = '';
       if (tx.type === 'split') badge = `<span class="tx-badge badge-split">SPLIT${tx.splitWith ? ' · '+tx.splitWith : ''}</span>`;
@@ -1944,6 +1960,9 @@ function renderSettingsView() {
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);margin-bottom:10px;">Export & Data</div>
       <button class="btn btn-secondary" style="margin-bottom:8px;" onclick="exportCSV()">Export All Transactions (CSV)</button>
       <button class="btn btn-secondary" style="margin-bottom:8px;" onclick="exportCurrentMonth()">Export Current Month (CSV)</button>
+      <button class="btn btn-secondary" style="margin-bottom:8px;" onclick="exportBudgetSummary()">Export Budget Summary (CSV)</button>
+      <button class="btn btn-primary" style="margin-bottom:8px;" onclick="exportMonthlyBundle()">Export Monthly Bundle</button>
+      <p style="font-size:11px;color:var(--text-tertiary);margin-top:-4px;margin-bottom:8px;">Exports both current month transactions + budget summary for the AI pipeline.</p>
       <div class="section-gap"></div>
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);margin-bottom:8px;">Restore Backup</div>
       <p style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px;">Import a previously exported CSV to restore transactions.</p>
@@ -2134,6 +2153,59 @@ function exportCurrentMonth() {
   const txs = getMonthTxs(currentMonth, currentYear);
   const label = monthLabel(currentMonth, currentYear).replace(' ', '_');
   exportCSV(txs, `budget_${label}.csv`);
+}
+
+function exportBudgetSummary(m, y) {
+  if (m === undefined) m = currentMonth;
+  if (y === undefined) y = currentYear;
+
+  const txs = getMonthTxs(m, y);
+
+  // Sum spent by bucket (NEEDS, WANTS, SAVINGS only)
+  const spentByBucket = { NEEDS: 0, WANTS: 0, SAVINGS: 0 };
+  txs.forEach(tx => {
+    const bucket = catGroup(tx.category);
+    if (bucket in spentByBucket) {
+      spentByBucket[bucket] += tx.amount;
+    }
+  });
+
+  // Sum budgets by bucket
+  const budgetByBucket = { NEEDS: 0, WANTS: 0, SAVINGS: 0 };
+  Object.entries(CATEGORIES).forEach(([group, cats]) => {
+    if (group === 'REIMBURSEMENTS') return;
+    cats.forEach(c => {
+      if (group in budgetByBucket) {
+        budgetByBucket[group] += (DATA.budgets[c.id] || 0);
+      }
+    });
+  });
+
+  // Build CSV
+  let csv = 'bucket,spent,budget\n';
+  ['NEEDS', 'WANTS', 'SAVINGS'].forEach(bucket => {
+    csv += `${bucket},${spentByBucket[bucket].toFixed(2)},${budgetByBucket[bucket].toFixed(2)}\n`;
+  });
+
+  const label = monthLabel(m, y).replace(' ', '_');
+  downloadFile(csv, `pwa_budget_summary_${label}.csv`, 'text/csv');
+}
+
+function exportMonthlyBundle() {
+  // Export both current month transactions and budget summary
+  const txs = getMonthTxs(currentMonth, currentYear);
+  const label = monthLabel(currentMonth, currentYear).replace(' ', '_');
+
+  if (txs.length === 0) { showToast('No transactions this month'); return; }
+
+  // Export transactions first
+  exportCSV(txs, `pwa_export_${label}.csv`);
+
+  // Export budget summary after a short delay (browser may block simultaneous downloads)
+  setTimeout(() => {
+    exportBudgetSummary(currentMonth, currentYear);
+    showToast('Both files exported');
+  }, 500);
 }
 
 function downloadFile(content, filename, mime) {
