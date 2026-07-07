@@ -352,6 +352,13 @@ select.form-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http
   margin-left: 6px;
 }
 .tx-edit-btn:active { color: var(--text); }
+.tx-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
 
 .date-group-header {
   font-size: 12px;
@@ -668,7 +675,7 @@ const CATEGORIES = {
     { id: 'debt-min', label: 'DEBT — minimum payments' },
     { id: 'food-groceries', label: 'FOOD — groceries' },
     { id: 'health-medical', label: 'HEALTH — medical' },
-    { id: 'health-meds', label: 'HEALTH' },
+    { id: 'health-meds', label: 'HEALTH — meds' },
     { id: 'health-supplies', label: 'HEALTH — supplies' },
     { id: 'home-rent', label: 'HOME — mortgage/rent' },
     { id: 'home-supplies', label: 'HOME — supplies' },
@@ -798,6 +805,7 @@ let formState = {
   type: 'solo',
   splitWith: '',
   expectedBack: '',
+  expectedBackManual: false,
   notes: '',
   date: '',
   account: '',
@@ -845,7 +853,7 @@ function restoreFormState() {
 }
 
 function clearFormState() {
-  formState = { amount: '', category: '', type: 'solo', splitWith: '', expectedBack: '', notes: '', date: '', account: '' };
+  formState = { amount: '', category: '', type: 'solo', splitWith: '', expectedBack: '', expectedBackManual: false, notes: '', date: '', account: '' };
   editingId = null;
   localStorage.removeItem(FORM_STORAGE_KEY);
 }
@@ -853,6 +861,16 @@ function clearFormState() {
 // ============================================================
 // UTILITIES
 // ============================================================
+
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function fmt(n) {
   return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
@@ -1062,6 +1080,10 @@ function renderAddView() {
         <label class="form-label">Expected Back ($)</label>
         <input type="number" inputmode="decimal" step="0.01" class="form-input"
                id="inp-expected" placeholder="0.00" value="${formState.expectedBack}">
+        <div class="chip-group" style="margin-top:6px;">
+          <button class="chip" data-split-pct="0.5">50%</button>
+          <button class="chip" data-split-pct="0.3">30%</button>
+        </div>
       </div>
       ` : ''}
 
@@ -1086,7 +1108,7 @@ function renderAddView() {
       <div class="form-group">
         <label class="form-label">Notes (optional)</label>
         <input type="text" class="form-input" id="inp-notes" placeholder="e.g., Target run, electric bill"
-               value="${formState.notes}">
+               value="${escapeHtml(formState.notes)}">
       </div>
 
       <div class="form-group">
@@ -1114,18 +1136,20 @@ function renderSimpleTotal() {
 
   const reimb = txs.filter(tx => catGroup(tx.category) === 'REIMBURSEMENTS')
                     .reduce((s, tx) => s + tx.amount, 0);
-  const netSpent = totalSpent - reimb;
 
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const daysLeft = daysInMonth - now.getDate();
 
+  // Unified rule: reimbursements are EXCLUDED from spending totals and shown
+  // as a separate + line (matches Budget tab, History, and system docs)
   return `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline;">
         <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);">Spent This Month</span>
         <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-tertiary);">${daysLeft} day${daysLeft !== 1 ? 's' : ''} left</span>
       </div>
-      <div style="font-family:var(--font-mono);font-size:22px;font-weight:700;margin-top:6px;">$${fmt(netSpent)}</div>
+      <div style="font-family:var(--font-mono);font-size:22px;font-weight:700;margin-top:6px;">$${fmt(totalSpent)}</div>
+      ${reimb > 0 ? `<div style="font-family:var(--font-mono);font-size:12px;color:var(--green);margin-top:2px;">+$${fmt(reimb)} reimbursements received</div>` : ''}
     </div>
   `;
 }
@@ -1162,13 +1186,31 @@ function renderCategoryBudget() {
   `;
 }
 
+// One-time global listener for closing the category dropdown (Fix: previously
+// re-attached on every Add-tab render, stacking handlers forever)
+let catDropdownListenerAttached = false;
+function attachCatDropdownGlobalListener() {
+  if (catDropdownListenerAttached) return;
+  catDropdownListenerAttached = true;
+  document.addEventListener('click', (e) => {
+    const catDropdown = document.getElementById('cat-dropdown');
+    const catInput = document.getElementById('inp-cat-search');
+    if (!catDropdown || !catInput) return;
+    if (!e.target.closest('#cat-search-wrap')) {
+      catDropdown.classList.add('hidden');
+      if (formState.category) catInput.value = catLabel(formState.category);
+      else catInput.value = '';
+    }
+  });
+}
+
 function attachAddListeners() {
   // Amount
   const amtEl = document.getElementById('inp-amount');
   if (amtEl) amtEl.addEventListener('input', e => {
     formState.amount = e.target.value;
-    // Auto-update split amount if in split mode
-    if (formState.type === 'split' && formState.amount) {
+    // Auto-update split amount only if user hasn't manually set Expected Back
+    if (formState.type === 'split' && formState.amount && !formState.expectedBackManual) {
       formState.expectedBack = (parseFloat(formState.amount) / 2).toFixed(2);
       const expEl = document.getElementById('inp-expected');
       if (expEl) expEl.value = formState.expectedBack;
@@ -1187,14 +1229,7 @@ function attachAddListeners() {
     catInput.addEventListener('input', () => {
       showCatDropdown(catInput.value);
     });
-    // Close dropdown on outside click
-    document.addEventListener('click', (e) => {
-      if (!e.target.closest('#cat-search-wrap')) {
-        catDropdown.classList.add('hidden');
-        if (formState.category) catInput.value = catLabel(formState.category);
-        else catInput.value = '';
-      }
-    }, { once: false });
+    attachCatDropdownGlobalListener();
   }
 
   // Type chips
@@ -1202,6 +1237,7 @@ function attachAddListeners() {
     chip.addEventListener('click', () => {
       formState.type = chip.dataset.type;
       formState.splitWith = '';
+      formState.expectedBackManual = false;
       // Auto-fill 50% split
       if (chip.dataset.type === 'split' && formState.amount) {
         formState.expectedBack = (parseFloat(formState.amount) / 2).toFixed(2);
@@ -1210,6 +1246,20 @@ function attachAddListeners() {
       }
       saveFormState();
       render();
+    });
+  });
+
+  // Split percentage quick chips (50% / 30%)
+  document.querySelectorAll('[data-split-pct]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const amt = parseFloat(formState.amount);
+      if (!amt) { showToast('Enter an amount first'); return; }
+      const pct = parseFloat(chip.dataset.splitPct);
+      formState.expectedBack = (amt * pct).toFixed(2);
+      formState.expectedBackManual = true; // deliberate choice — don't overwrite
+      const expEl = document.getElementById('inp-expected');
+      if (expEl) expEl.value = formState.expectedBack;
+      saveFormState();
     });
   });
 
@@ -1224,7 +1274,7 @@ function attachAddListeners() {
 
   // Expected back
   const expEl = document.getElementById('inp-expected');
-  if (expEl) expEl.addEventListener('input', e => { formState.expectedBack = e.target.value; saveFormState(); });
+  if (expEl) expEl.addEventListener('input', e => { formState.expectedBack = e.target.value; formState.expectedBackManual = true; saveFormState(); });
 
   // Notes
   const notesEl = document.getElementById('inp-notes');
@@ -1293,9 +1343,13 @@ function saveExpense() {
   if (!formState.category) { showToast('Pick a category'); return; }
   if (!formState.account) { showToast('Select an account'); return; }
 
-  // Determine date — use override if set, otherwise now
+  // Determine date — use override if set, otherwise now.
+  // When editing: if the date field wasn't changed, keep the transaction's
+  // original timestamp so it doesn't jump position within its day.
   let txDate;
-  if (formState.date) {
+  if (editingId && formState.originalDate && formState.date === formState.originalDateStr) {
+    txDate = formState.originalDate;
+  } else if (formState.date) {
     // Parse as local date at current time
     const parts = formState.date.split('-');
     const now = new Date();
@@ -1424,8 +1478,8 @@ function attachPinListeners() {
       dots.forEach((d, i) => d.classList.toggle('filled', i < pinInput.length));
 
       if (pinInput.length === 4) {
-        const storedPin = localStorage.getItem(PIN_STORAGE_KEY);
-        if (pinInput === storedPin) {
+        verifyPin(pinInput).then(ok => {
+        if (ok) {
           sessionUnlocked = true;
           pinInput = '';
           trackActivity();
@@ -1438,9 +1492,42 @@ function attachPinListeners() {
             render();
           }, 500);
         }
+        });
       }
     });
   });
+}
+
+// ============================================================
+// PIN HASHING (SHA-256 via crypto.subtle)
+// Stored value is a 64-char hex hash. Plaintext data in localStorage is
+// still unencrypted either way — CSV exports remain the real backup.
+// ============================================================
+
+async function hashPin(pin) {
+  if (!(window.crypto && crypto.subtle)) return null; // non-secure context fallback
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('budget-pin:' + pin));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function storePin(pin) {
+  const h = await hashPin(pin);
+  localStorage.setItem(PIN_STORAGE_KEY, h || pin);
+}
+
+async function verifyPin(pin) {
+  const stored = localStorage.getItem(PIN_STORAGE_KEY);
+  if (!stored) return false;
+  if (stored.length === 4) {
+    // Legacy plaintext PIN — verify directly, then upgrade to hashed storage
+    if (pin === stored) {
+      await storePin(pin);
+      return true;
+    }
+    return false;
+  }
+  const h = await hashPin(pin);
+  return h !== null && h === stored;
 }
 
 function attachPinSetupListeners() {
@@ -1465,7 +1552,7 @@ function attachPinSetupListeners() {
           setTimeout(() => render(), 200);
         } else {
           if (pinInput === pinSetupFirst) {
-            localStorage.setItem(PIN_STORAGE_KEY, pinInput);
+            storePin(pinInput);
             sessionUnlocked = true;
             trackActivity();
             pinInput = '';
@@ -1727,8 +1814,13 @@ function renderHistoryView() {
 
   html += '<div class="card" style="padding:0 14px;">';
   Object.entries(groups).forEach(([date, items]) => {
-    const dayTotal = items.reduce((s, tx) => s + tx.amount, 0);
-    html += `<div class="date-group-header"><span>${date}</span><span class="date-group-total">$${fmt(dayTotal)}</span></div>`;
+    // Day total excludes reimbursements (unified rule: exclude everywhere)
+    const dayTotal = items.filter(tx => catGroup(tx.category) !== 'REIMBURSEMENTS')
+                          .reduce((s, tx) => s + tx.amount, 0);
+    const dayReimb = items.filter(tx => catGroup(tx.category) === 'REIMBURSEMENTS')
+                          .reduce((s, tx) => s + tx.amount, 0);
+    const reimbLabel = dayReimb > 0 ? ` <span style="color:var(--green);">+$${fmt(dayReimb)}</span>` : '';
+    html += `<div class="date-group-header"><span>${date}</span><span class="date-group-total">$${fmt(dayTotal)}${reimbLabel}</span></div>`;
     items.forEach(tx => {
       let badge = '';
       if (tx.type === 'split') badge = `<span class="tx-badge badge-split">SPLIT${tx.splitWith ? ' · '+tx.splitWith : ''}</span>`;
@@ -1742,7 +1834,7 @@ function renderHistoryView() {
           <div class="tx-item">
             <div class="tx-info">
               <div class="tx-cat">${catLabel(tx.category)}</div>
-              ${tx.notes ? `<div class="tx-note">${tx.notes}</div>` : ''}
+              ${tx.notes ? `<div class="tx-note">${escapeHtml(tx.notes)}</div>` : ''}
               ${tx.account ? `<div style="font-size:11px;color:var(--text-tertiary);margin-top:2px;">${tx.account}</div>` : ''}
               ${badge}
               ${tx.expectedBack ? `<div style="font-size:11px;color:var(--accent);margin-top:2px;">Expects $${fmt(tx.expectedBack)} back</div>` : ''}
@@ -1753,7 +1845,10 @@ function renderHistoryView() {
               </div>
               <div class="tx-date">${new Date(tx.date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</div>
             </div>
-            <button class="tx-edit-btn" onclick="editTx('${tx.id}')" title="Edit">✎</button>
+            <div class="tx-actions">
+              <button class="tx-edit-btn" onclick="editTx('${tx.id}')" title="Edit">✎</button>
+              <button class="tx-edit-btn" onclick="if(confirm('Delete this transaction?'))deleteTx('${tx.id}')" title="Delete">×</button>
+            </div>
           </div>
         </div>
       `;
@@ -1786,9 +1881,12 @@ function editTx(id) {
     type: tx.type || 'solo',
     splitWith: tx.splitWith || '',
     expectedBack: tx.expectedBack ? tx.expectedBack.toString() : '',
+    expectedBackManual: !!tx.expectedBack, // preserve manually set split amounts
     notes: tx.notes || '',
     date: dateStr,
     account: tx.account || '',
+    originalDate: tx.date,     // full original timestamp
+    originalDateStr: dateStr,  // to detect whether the date field was changed
   };
   saveFormState();
   switchTab('add');
@@ -2251,17 +2349,24 @@ function importCSV(csvText) {
       labelToId[(parts[0] + ' — ' + parts[1]).toLowerCase()] = c.id;
     }
   });
+  // Backward-compat: old exports (label was bare 'HEALTH') have blank Subcategory
+  labelToId['health'] = 'health-meds';
 
-  let imported = 0, skipped = 0;
+  let imported = 0, skipped = 0, badDates = 0;
 
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
 
-    // Parse CSV row (handles quoted fields)
+    // Parse CSV row (handles quoted fields and doubled-quote escapes)
     const fields = [];
     let current = '', inQuotes = false;
-    for (const ch of lines[i]) {
-      if (ch === '"') { inQuotes = !inQuotes; }
+    const line = lines[i];
+    for (let j = 0; j < line.length; j++) {
+      const ch = line[j];
+      if (ch === '"') {
+        if (inQuotes && line[j + 1] === '"') { current += '"'; j++; } // "" → literal quote
+        else { inQuotes = !inQuotes; }
+      }
       else if (ch === ',' && !inQuotes) { fields.push(current.trim()); current = ''; }
       else { current += ch; }
     }
@@ -2284,15 +2389,18 @@ function importCSV(csvText) {
     }
     if (!catId) { skipped++; continue; }
 
-    // Parse date
+    // Parse date — skip and count rows with unparseable dates rather than
+    // silently importing them as "today"
     let txDate;
-    try {
-      const dateStr = fields[dateIdx] || '';
-      const timeStr = timeIdx !== -1 ? (fields[timeIdx] || '12:00 PM') : '12:00 PM';
-      txDate = new Date(dateStr + ' ' + timeStr).toISOString();
-    } catch (e) {
-      txDate = new Date().toISOString();
+    const dateStr = fields[dateIdx] || '';
+    const timeStr = timeIdx !== -1 ? (fields[timeIdx] || '12:00 PM') : '12:00 PM';
+    const parsed = new Date(dateStr + ' ' + timeStr);
+    if (!dateStr || isNaN(parsed.getTime())) {
+      badDates++;
+      skipped++;
+      continue;
     }
+    txDate = parsed.toISOString();
 
     const tx = {
       id: genId(),
@@ -2313,7 +2421,9 @@ function importCSV(csvText) {
   saveData(DATA);
   render();
 
-  if (skipped > 0) {
+  if (badDates > 0) {
+    showToast(`Imported ${imported}, skipped ${skipped} (${badDates} bad dates)`);
+  } else if (skipped > 0) {
     showToast(`Imported ${imported}, skipped ${skipped}`);
   } else {
     showToast(`Imported ${imported} transactions`);
@@ -2335,11 +2445,19 @@ function clearAllData() {
 // PULL TO REFRESH
 // ============================================================
 
+let pullToRefreshInitialized = false;
+
 function initPullToRefresh() {
+  // Attach once — #main-content is a permanent element whose innerHTML changes,
+  // so repeated attachment compounds listeners across renders.
+  if (pullToRefreshInitialized) return;
+  pullToRefreshInitialized = true;
+
   const content = document.getElementById('main-content');
   let startY = 0, pulling = false;
 
   content.addEventListener('touchstart', (e) => {
+    if (!['budget', 'history'].includes(currentTab)) return;
     if (content.scrollTop === 0) {
       startY = e.touches[0].clientY;
       pulling = true;
@@ -2348,6 +2466,7 @@ function initPullToRefresh() {
 
   content.addEventListener('touchmove', (e) => {
     if (!pulling) return;
+    if (!['budget', 'history'].includes(currentTab)) { pulling = false; return; }
     const dy = e.touches[0].clientY - startY;
     if (dy > 0 && dy < 120 && content.scrollTop === 0) {
       const indicator = document.getElementById('pull-indicator');
