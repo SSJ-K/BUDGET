@@ -2061,6 +2061,10 @@ function renderSettingsView() {
       <button class="btn btn-secondary" style="margin-bottom:8px;" onclick="exportBudgetSummary()">Export Budget Summary (CSV)</button>
       <button class="btn btn-primary" style="margin-bottom:8px;" onclick="exportMonthlyBundle()">Export Monthly Bundle</button>
       <p style="font-size:11px;color:var(--text-tertiary);margin-top:-4px;margin-bottom:8px;">Exports both current month transactions + budget summary for the AI pipeline.</p>
+      <button class="btn btn-secondary" style="margin-bottom:8px;" onclick="exportJSONBackup()">Export Full Backup (JSON)</button>
+      <input type="file" accept=".json,application/json" id="inp-json-import" style="display:none;">
+      <button class="btn btn-secondary" style="margin-bottom:8px;" id="btn-json-import">Import Full Backup (JSON)</button>
+      <p style="font-size:11px;color:var(--text-tertiary);margin-top:-4px;margin-bottom:8px;">Full backup includes transactions, budgets, and settings. PIN is not included — re-set it after restoring on a new device.</p>
       <div class="section-gap"></div>
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);margin-bottom:8px;">Restore Backup</div>
       <p style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px;">Import a previously exported CSV to restore transactions.</p>
@@ -2081,7 +2085,28 @@ function renderSettingsView() {
     </div>
   `;
 
+  // Floating scroll-to-top / scroll-to-bottom buttons
+  html += `
+    <div style="position:fixed;bottom:calc(20px + var(--safe-bottom));right:max(16px,calc(50vw - 199px));display:flex;flex-direction:column;gap:8px;z-index:40;">
+      <button onclick="scrollSettingsTo('top')" aria-label="Scroll to top"
+              style="width:44px;height:44px;border-radius:50%;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);box-shadow:0 4px 12px rgba(0,0,0,0.15);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+      </button>
+      <button onclick="scrollSettingsTo('bottom')" aria-label="Scroll to bottom"
+              style="width:44px;height:44px;border-radius:50%;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);box-shadow:0 4px 12px rgba(0,0,0,0.15);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </div>
+  `;
+
   return html;
+}
+
+function scrollSettingsTo(where) {
+  const c = document.getElementById('main-content');
+  if (!c) return;
+  c.scrollTo({ top: where === 'top' ? 0 : c.scrollHeight, behavior: 'smooth' });
+  haptic();
 }
 
 function attachSettingsListeners() {
@@ -2159,6 +2184,23 @@ function attachSettingsListeners() {
           showToast('Import failed: ' + err.message);
         }
         importInput.value = '';
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  // JSON Backup Import
+  const jsonImportBtn = document.getElementById('btn-json-import');
+  const jsonImportInput = document.getElementById('inp-json-import');
+  if (jsonImportBtn && jsonImportInput) {
+    jsonImportBtn.addEventListener('click', () => jsonImportInput.click());
+    jsonImportInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        importJSONBackup(ev.target.result);
+        jsonImportInput.value = '';
       };
       reader.readAsText(file);
     });
@@ -2317,6 +2359,98 @@ function downloadFile(content, filename, mime) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   showToast('Exported ' + filename);
+}
+
+// ============================================================
+// JSON FULL BACKUP (EXPORT / IMPORT)
+// ============================================================
+
+function exportJSONBackup() {
+  let trackerData = null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    trackerData = raw ? JSON.parse(raw) : DATA;
+  } catch(e) {
+    trackerData = DATA;
+  }
+
+  // Excluded on purpose: budget_pin (never export the PIN hash),
+  // budget_tracker_form_v1 (transient in-progress form draft)
+  const envelope = {
+    app: 'finance-tracker',
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    data: {
+      budget_tracker_v1: trackerData,
+      budget_pin_timeout: localStorage.getItem(PIN_TIMEOUT_KEY),
+      budget_theme: localStorage.getItem('budget_theme'),
+      budget_last_account: localStorage.getItem(LAST_ACCOUNT_KEY),
+    },
+  };
+
+  const d = new Date();
+  const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  downloadFile(JSON.stringify(envelope, null, 2), `finance_backup_${dateStr}.json`, 'application/json');
+}
+
+function importJSONBackup(jsonText) {
+  let backup;
+  try {
+    backup = JSON.parse(jsonText);
+  } catch(e) {
+    showToast('Invalid backup file');
+    return;
+  }
+
+  // Validate envelope
+  if (!backup || typeof backup !== 'object' ||
+      backup.app !== 'finance-tracker' ||
+      backup.schemaVersion !== 1 ||
+      !backup.data || typeof backup.data !== 'object') {
+    showToast('Invalid backup file');
+    return;
+  }
+
+  const tracker = backup.data.budget_tracker_v1;
+  if (!tracker || typeof tracker !== 'object' ||
+      !Array.isArray(tracker.transactions) ||
+      !tracker.budgets || typeof tracker.budgets !== 'object' || Array.isArray(tracker.budgets)) {
+    showToast('Invalid backup file');
+    return;
+  }
+
+  const exportedDate = backup.exportedAt ? new Date(backup.exportedAt).toLocaleDateString('en-US') : 'unknown date';
+  if (!confirm(`Replace ALL app data with this backup from ${exportedDate}? This overwrites your current transactions, budgets, and settings. This cannot be undone.`)) {
+    return;
+  }
+
+  // Write main data via the existing saveData() path
+  saveData(tracker);
+
+  // Restore settings keys only if present in the backup (skip nulls).
+  // NEVER touches budget_pin — the current PIN stays as-is.
+  if (typeof backup.data.budget_pin_timeout === 'string') {
+    localStorage.setItem(PIN_TIMEOUT_KEY, backup.data.budget_pin_timeout);
+  }
+  if (typeof backup.data.budget_theme === 'string') {
+    localStorage.setItem('budget_theme', backup.data.budget_theme);
+  }
+  if (typeof backup.data.budget_last_account === 'string') {
+    localStorage.setItem(LAST_ACCOUNT_KEY, backup.data.budget_last_account);
+  }
+
+  // Refresh in-memory state from storage
+  DATA = loadData();
+
+  // Re-apply theme
+  const theme = localStorage.getItem('budget_theme');
+  const isDarkTheme = theme === 'dark';
+  document.documentElement.setAttribute('data-theme', isDarkTheme ? 'dark' : 'light');
+  document.querySelector('meta[name="theme-color"]').content = isDarkTheme ? '#2a2a2a' : '#ffffff';
+
+  haptic();
+  render();
+  showToast(`Backup restored — ${DATA.transactions.length} transactions`);
 }
 
 function importCSV(csvText) {
