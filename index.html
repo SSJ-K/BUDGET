@@ -6,7 +6,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Budget">
-<meta name="theme-color" content="#ffffff">
+<meta name="theme-color" content="#f5f5f0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)">
 <title>Budget Tracker</title>
 <style>
 :root {
@@ -76,8 +77,10 @@ body {
 
 /* HEADER */
 .header {
-  padding: 8px 16px 12px;
+  padding: calc(var(--safe-top) + 36px) 16px 12px;
   background: var(--bg);
+  position: relative;
+  z-index: 2;
   flex-shrink: 0;
 }
 .header h1 {
@@ -97,14 +100,15 @@ body {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 0 16px calc(16px + var(--safe-bottom));
+  padding: 0 16px 16px;
 }
 
 /* TAB BAR */
 .tab-bar {
   display: flex;
   background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  padding-bottom: var(--safe-bottom);
   flex-shrink: 0;
 }
 .tab {
@@ -482,6 +486,18 @@ select.form-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http
   color: var(--text);
 }
 
+/* UPDATE BANNER */
+.update-banner {
+  position: fixed; left: 50%; bottom: calc(72px + var(--safe-bottom));
+  transform: translateX(-50%) translateY(120px);
+  background: var(--accent); color: #fff; padding: 10px 16px; border-radius: 20px;
+  font-size: 14px; font-weight: 600; z-index: 998; border: none; font-family: inherit;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25); cursor: pointer; white-space: nowrap;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  visibility: hidden; opacity: 0; pointer-events: none;
+}
+.update-banner.show { transform: translateX(-50%) translateY(0); visibility: visible; opacity: 1; pointer-events: auto; }
+
 /* TOAST */
 .toast {
   position: fixed;
@@ -635,6 +651,11 @@ select.form-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http
 </head>
 <body>
 <div id="app">
+  <div class="header">
+    <h1 id="page-title">Add Expense</h1>
+    <div class="header-sub" id="page-subtitle"></div>
+  </div>
+  <div class="content" id="main-content"></div>
   <div class="tab-bar">
     <button class="tab active" data-tab="add" onclick="switchTab('add')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
@@ -657,13 +678,9 @@ select.form-input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http
       <span>Settings</span>
     </button>
   </div>
-  <div class="header">
-    <h1 id="page-title">Add Expense</h1>
-    <div class="header-sub" id="page-subtitle"></div>
-  </div>
-  <div class="content" id="main-content"></div>
 </div>
 <div class="toast" id="toast"></div>
+<button class="update-banner" id="update-banner" onclick="location.reload()">New version ready — tap to reload</button>
 
 <script>
 // ============================================================
@@ -815,6 +832,7 @@ let formState = {
   account: '',
 };
 let editingId = null;
+let calcState = { display: '0', prev: null, op: null, justEvaluated: false };
 let sessionUnlocked = false;
 let lastActivity = Date.now();
 const PIN_STORAGE_KEY = 'budget_pin';
@@ -854,6 +872,59 @@ function restoreFormState() {
       if (saved.editingId) editingId = saved.editingId;
     }
   } catch(e) {}
+}
+
+const SESSION_KEY = 'budget_tracker_session_v1';
+const scrollPos = {};
+let sessionSaveTimer = null;
+
+function saveSession() {
+  try {
+    const c = document.getElementById('main-content');
+    if (c && currentTab) scrollPos[currentTab] = c.scrollTop;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      currentTab, currentMonth, currentYear, formState, editingId, calcState, scrollPos,
+    }));
+  } catch(e) {}
+}
+
+function scheduleSaveSession() {
+  clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = setTimeout(saveSession, 300);
+}
+
+function restoreSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (!s || typeof s !== 'object') return;
+    if (typeof s.currentTab === 'string' && ['add','budget','history','calc','settings'].includes(s.currentTab)) currentTab = s.currentTab;
+    if (Number.isInteger(s.currentMonth) && s.currentMonth >= 0 && s.currentMonth <= 11) currentMonth = s.currentMonth;
+    if (Number.isInteger(s.currentYear) && s.currentYear > 2000 && s.currentYear < 2200) currentYear = s.currentYear;
+    if (s.formState && typeof s.formState === 'object') {
+      Object.keys(formState).forEach(k => {
+        if (typeof s.formState[k] === typeof formState[k]) formState[k] = s.formState[k];
+      });
+    }
+    if (typeof s.editingId === 'string') editingId = s.editingId;
+    if (s.calcState && typeof s.calcState === 'object' && typeof s.calcState.display === 'string') {
+      calcState = {
+        display: s.calcState.display,
+        prev: typeof s.calcState.prev === 'string' ? s.calcState.prev : null,
+        op: typeof s.calcState.op === 'string' ? s.calcState.op : null,
+        justEvaluated: !!s.calcState.justEvaluated,
+      };
+    }
+    if (s.scrollPos && typeof s.scrollPos === 'object') {
+      Object.keys(s.scrollPos).forEach(k => { if (typeof s.scrollPos[k] === 'number') scrollPos[k] = s.scrollPos[k]; });
+    }
+  } catch(e) {}
+}
+
+function clearSession() {
+  Object.keys(scrollPos).forEach(k => delete scrollPos[k]);
+  localStorage.removeItem(SESSION_KEY);
 }
 
 function clearFormState() {
@@ -957,6 +1028,7 @@ function haptic() {
 // ============================================================
 
 function switchTab(tab) {
+  if (tab !== currentTab) scrollPos[tab] = 0;
   currentTab = tab;
   trackActivity();
   document.querySelectorAll('.tab').forEach(t => {
@@ -969,11 +1041,21 @@ function switchTab(tab) {
 // RENDER
 // ============================================================
 
+let lastRenderedTab = null;
+
 function render() {
   const content = document.getElementById('main-content');
   const title = document.getElementById('page-title');
   const subtitle = document.getElementById('page-subtitle');
 
+  if (lastRenderedTab) scrollPos[lastRenderedTab] = content.scrollTop;
+  renderInner(content, title, subtitle);
+  lastRenderedTab = currentTab;
+  content.scrollTop = scrollPos[currentTab] || 0;
+  saveSession();
+}
+
+function renderInner(content, title, subtitle) {
   // Check PIN lock for protected tabs
   const pin = localStorage.getItem(PIN_STORAGE_KEY);
   if (pin && sessionUnlocked && isSessionExpired()) {
@@ -1033,8 +1115,6 @@ function render() {
 // ============================================================
 // CALCULATOR VIEW
 // ============================================================
-
-let calcState = { display: '0', prev: null, op: null, justEvaluated: false };
 
 function renderCalcView() {
   const keyStyle = "font-size:22px;font-weight:600;border-radius:14px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);padding:0;height:64px;cursor:pointer;";
@@ -2193,13 +2273,14 @@ function renderSettingsView() {
     <div class="card">
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);margin-bottom:10px;">Info</div>
       <div class="stat-row"><span class="stat-label">Total transactions</span><span class="stat-value">${totalTx}</span></div>
+      <div class="stat-row"><span class="stat-label">App version</span><span class="stat-value">v1.1</span></div>
       <div class="stat-row"><span class="stat-label">Storage used</span><span class="stat-value">${(new Blob([localStorage.getItem(STORAGE_KEY) || '']).size / 1024).toFixed(1)} KB</span></div>
     </div>
   `;
 
   // Floating scroll-to-top / scroll-to-bottom buttons
   html += `
-    <div style="position:fixed;bottom:calc(20px + var(--safe-bottom));right:max(16px,calc(50vw - 199px));display:flex;flex-direction:column;gap:8px;z-index:40;">
+    <div style="position:fixed;bottom:calc(72px + var(--safe-bottom));right:max(16px,calc(50vw - 199px));display:flex;flex-direction:column;gap:8px;z-index:40;">
       <button onclick="scrollSettingsTo('top')" aria-label="Scroll to top"
               style="width:44px;height:44px;border-radius:50%;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);box-shadow:0 4px 12px rgba(0,0,0,0.15);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
@@ -2230,7 +2311,7 @@ function attachSettingsListeners() {
       const newTheme = isDark ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', newTheme);
       localStorage.setItem('budget_theme', newTheme);
-      document.querySelector('meta[name="theme-color"]').content = newTheme === 'dark' ? '#2a2a2a' : '#ffffff';
+      document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.content = newTheme === 'dark' ? '#1a1a1a' : '#f5f5f0');
       render();
     });
   }
@@ -2558,7 +2639,7 @@ function importJSONBackup(jsonText) {
   const theme = localStorage.getItem('budget_theme');
   const isDarkTheme = theme === 'dark';
   document.documentElement.setAttribute('data-theme', isDarkTheme ? 'dark' : 'light');
-  document.querySelector('meta[name="theme-color"]').content = isDarkTheme ? '#2a2a2a' : '#ffffff';
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.content = isDarkTheme ? '#1a1a1a' : '#f5f5f0');
 
   haptic();
   render();
@@ -2681,6 +2762,7 @@ function clearAllData() {
   if (!confirm('Are you sure? All data will be permanently deleted.')) return;
   localStorage.removeItem(STORAGE_KEY);
   clearFormState();
+  clearSession();
   DATA = getDefaults();
   saveData(DATA);
   showToast('All data cleared');
@@ -2748,11 +2830,20 @@ function initPullToRefresh() {
 const savedTheme = localStorage.getItem('budget_theme');
 if (savedTheme === 'dark') {
   document.documentElement.setAttribute('data-theme', 'dark');
-  document.querySelector('meta[name="theme-color"]').content = '#2a2a2a';
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.content = '#1a1a1a');
 }
 
 // Restore form state (survives accidental close)
 restoreFormState();
+// Restore session (tab, month, drafts, scroll) — runs before first render
+restoreSession();
+document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === currentTab));
+
+// Session save triggers
+document.addEventListener('input', scheduleSaveSession, true);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveSession(); });
+window.addEventListener('pagehide', saveSession);
+document.getElementById('main-content').addEventListener('scroll', scheduleSaveSession, { passive: true });
 
 // Track activity on any touch/click
 document.addEventListener('touchstart', trackActivity, { passive: true });
@@ -2764,6 +2855,19 @@ document.addEventListener('visibilitychange', () => {
 });
 
 render();
+
+// Service worker: offline shell + update pill (never auto-reloads)
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(reg => {
+      reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    }).catch(() => {});
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data && e.data.type === 'UPDATE_READY') document.getElementById('update-banner').classList.add('show');
+    });
+  });
+}
 </script>
 </body>
 </html>
