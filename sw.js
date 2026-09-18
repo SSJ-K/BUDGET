@@ -1,0 +1,45 @@
+const CACHE_VERSION = 'budgets-v1.1';
+const SHELL = ['./', './index.html'];
+
+self.addEventListener('install', e => {
+  e.waitUntil(
+    caches.open(CACHE_VERSION)
+      .then(c => Promise.all(SHELL.map(u => fetch(u, { cache: 'reload' }).then(r => r.ok && c.put(u, r)))))
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_VERSION).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: 'window' }))
+      .then(clients => clients.forEach(c => c.postMessage({ type: 'UPDATE_READY' })))
+  );
+});
+
+self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET' || new URL(e.request.url).origin !== self.location.origin) return;
+  e.respondWith(
+    caches.open(CACHE_VERSION).then(async cache => {
+      const cached = await cache.match(e.request, { ignoreSearch: true });
+      const network = fetch(e.request, { cache: 'reload' }).then(async res => {
+        if (res && res.ok) {
+          const fresh = res.clone();
+          if (cached) {
+            const [a, b] = await Promise.all([cached.clone().text(), fresh.clone().text()]);
+            if (a !== b) {
+              await cache.put(e.request, fresh);
+              const clients = await self.clients.matchAll({ type: 'window' });
+              clients.forEach(c => c.postMessage({ type: 'UPDATE_READY' }));
+            }
+          } else {
+            await cache.put(e.request, fresh);
+          }
+        }
+        return res;
+      }).catch(() => cached);
+      return cached || network;
+    })
+  );
+});
